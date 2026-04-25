@@ -255,7 +255,7 @@ def _placeholder_outputs(env_state, message: str):
 
 # ── Gradio UI ────────────────────────────────────────────────────────────────
 
-with gr.Blocks() as demo:
+with gr.Blocks(theme=gr.themes.Soft(), css=CUSTOM_CSS) as demo:
 
     env_state = gr.State(value=None)
 
@@ -396,6 +396,4 @@ if __name__ == "__main__":
     demo.launch(
         server_name="0.0.0.0",
         server_port=7860,
-        theme=gr.themes.Soft(),
-        css=CUSTOM_CSS,
     )
