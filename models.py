@@ -35,6 +35,10 @@ class Action(BaseModel):
 class Observation(BaseModel):
     """Everything the agent can see at the start of a step."""
 
+    task_id: str = Field(
+        ...,
+        description="The unique identifier for the current task.",
+    )
     customer_message: str = Field(
         ...,
         description="The current angry-customer message the agent must address.",

@@ -285,23 +285,47 @@ def is_gibberish(text: str) -> bool:
 # Main grader
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Strictness & Diversity System
+# ---------------------------------------------------------------------------
+
+LAZY_PHRASES: List[str] = [
+    r"Dear \[Customer's Name\]",
+    r"I understand your(?:\s+concerns?|\s+frustration)",
+    r"apologize for the inconvenience",
+]
+
+def score_tone(response: str, difficulty: str = "easy") -> float:
+    pos = _count_matches(POSITIVE_TONE_SIGNALS, response)
+    neg = _count_matches(NEGATIVE_TONE_SIGNALS, response)
+    
+    # Base: need 2 positive signals for full marks
+    pos_ratio = min(pos / 2.0, 1.0)
+    
+    # NEW: Diversity Check - Penalize lazy/repetitive templates
+    lazy_hits = _count_matches(LAZY_PHRASES, response)
+    diversity_penalty = lazy_hits * 0.1 # Softened
+    
+    # 🌟 ELITE BONUS: Allow models to reach 1.0 more easily
+    if difficulty == "hard":
+        pos_ratio = min(pos_ratio + 0.27, 1.0) # Much easier Hard Tone
+    elif difficulty == "medium":
+        pos_ratio = min(pos_ratio + 0.12, 1.0) # Slightly harder Medium Tone
+
+    return max(0.0, round(pos_ratio - (neg * 0.3) - diversity_penalty, 4))
+
+
+# ---------------------------------------------------------------------------
+# Main grader
+# ---------------------------------------------------------------------------
+
 def grade(
     response: str,
     task: Task,
     past_mistakes: List[str],
 ) -> GraderResult:
-    """
-    Grade a response and return a GraderResult with the final reward.
-
-    Args:
-        response:       The agent's customer-facing reply.
-        task:           The task definition (has required/forbidden info).
-        past_mistakes:  Mistake tags stored in memory from previous episodes.
-
-    Returns:
-        GraderResult with all sub-scores and the final reward.
-    """
-    tone = score_tone(response)
+    # 1. Base scores
+    tone = score_tone(response, task.difficulty)
     correctness = score_correctness(response, task)
     resolution = score_resolution(response)
     actionability = score_actionability(response)
@@ -309,62 +333,57 @@ def grade(
     conciseness = score_conciseness(response)
     clarity = score_clarity(response)
 
-    # ── Gibberish Check ──
+    # 2. TECHNICAL REQUIREMENTS (DIFFICULTY GATES)
+    ref_id_present = bool(re.search(r"REF-\d{4}", response))
+    case_id_present = bool(re.search(r"CASE-\d{4}", response))
+    
+    if task.difficulty == "hard" and not ref_id_present:
+        # Cap Hard mode
+        tone *= 0.7
+        resolution *= 0.5
+        actionability *= 0.5
+    
+    if task.difficulty == "medium" and not case_id_present:
+        # Cap Medium mode
+        tone *= 0.7
+        resolution *= 0.6
+        
+    # 3. Gibberish Check
     if is_gibberish(response):
         return GraderResult(
-            tone_score=0.1,
-            correctness_score=0.1,
-            resolution_score=0.0,
-            actionability_score=0.0,
-            policy_compliance_score=0.0,
-            conciseness_score=0.1,
-            clarity_score=0.1,
-            base_score=0.1,
-            improvement_bonus=0.0,
-            repeated_mistake_penalty=0.0,
-            final_reward=0.1,
-            mistakes_found=["gibberish_detected"]
+            tone_score=0.1, correctness_score=0.1, resolution_score=0.0,
+            actionability_score=0.0, policy_compliance_score=0.0,
+            conciseness_score=0.1, clarity_score=0.1, base_score=0.1,
+            improvement_bonus=0.0, repeated_mistake_penalty=0.0,
+            final_reward=0.1, mistakes_found=["gibberish_detected"]
         )
 
-    base_score = round(
-        (0.28 * tone) +
-        (0.22 * correctness) +
-        (0.18 * resolution) +
-        (0.12 * actionability) +
-        (0.08 * policy) +
-        (0.07 * conciseness) +
-        (0.05 * clarity),
-        4
-    )
+    # Calculate base score with difficulty weighting
+    weights = [0.28, 0.22, 0.18, 0.12, 0.08, 0.07, 0.05]
+    scores = [tone, correctness, resolution, actionability, policy, conciseness, clarity]
+    base_score = round(sum(w * s for w, s in zip(weights, scores)), 4)
 
-    # Detect mistakes in this response
-    current_mistakes: List[str] = detect_mistakes(response, task)
-    current_set: Set[str] = set(current_mistakes)
-    past_set: Set[str] = set(past_mistakes)
+    # Detect mistakes
+    current_mistakes = detect_mistakes(response, task)
+    if task.difficulty == "hard" and not ref_id_present:
+        current_mistakes.append("missing_reference_id")
 
-    # Improvement bonus: past mistakes that are NOT in current mistakes
+    current_set = set(current_mistakes)
+    past_set = set(past_mistakes)
+
+    # Bonuses/Penalties
     avoided = past_set - current_set
     improvement_bonus = round(len(avoided) * 0.10, 4)
-
-    # Repeated mistake penalty: past mistakes that ARE in current mistakes
     repeated = past_set & current_set
     repeated_mistake_penalty = round(len(repeated) * 0.15, 4)
 
     final_reward = round(base_score + improvement_bonus - repeated_mistake_penalty, 4)
-    # Clamp to [-0.5, 1.5] to allow slight over/under without being unbounded
     final_reward = max(-0.5, min(1.5, final_reward))
 
     return GraderResult(
-        tone_score=tone,
-        correctness_score=correctness,
-        resolution_score=resolution,
-        actionability_score=actionability,
-        policy_compliance_score=policy,
-        conciseness_score=conciseness,
-        clarity_score=clarity,
-        base_score=base_score,
-        improvement_bonus=improvement_bonus,
-        repeated_mistake_penalty=repeated_mistake_penalty,
-        final_reward=final_reward,
-        mistakes_found=current_mistakes,
+        tone_score=tone, correctness_score=correctness, resolution_score=resolution,
+        actionability_score=actionability, policy_compliance_score=policy,
+        conciseness_score=conciseness, clarity_score=clarity, base_score=base_score,
+        improvement_bonus=improvement_bonus, repeated_mistake_penalty=repeated_mistake_penalty,
+        final_reward=final_reward, mistakes_found=current_mistakes,
     )
