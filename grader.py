@@ -197,6 +197,40 @@ def score_policy(response: str, task: Task) -> float:
 
 
 # ---------------------------------------------------------------------------
+# Conciseness scorer
+# ---------------------------------------------------------------------------
+
+def score_conciseness(response: str) -> float:
+    word_count = len(response.split())
+    if word_count < 60:
+        return 1.0
+    elif word_count < 100:
+        return 0.7
+    elif word_count < 150:
+        return 0.4
+    return 0.2
+
+# ---------------------------------------------------------------------------
+# Clarity scorer
+# ---------------------------------------------------------------------------
+
+def score_clarity(response: str) -> float:
+    # Basic clarity estimation via words-per-sentence
+    sentences = [s.strip() for s in re.split(r'[.!?]', response) if s.strip()]
+    if not sentences:
+        return 1.0  # Empty or no punctuation
+    
+    total_words = len(response.split())
+    wps = total_words / len(sentences)
+    
+    if wps < 15:
+        return 1.0
+    elif wps < 25:
+        return 0.7
+    return 0.4
+
+
+# ---------------------------------------------------------------------------
 # Main grader
 # ---------------------------------------------------------------------------
 
@@ -221,13 +255,17 @@ def grade(
     resolution = score_resolution(response)
     actionability = score_actionability(response)
     policy = score_policy(response, task)
+    conciseness = score_conciseness(response)
+    clarity = score_clarity(response)
 
     base_score = round(
-        (0.30 * tone) +
-        (0.25 * correctness) +
-        (0.20 * resolution) +
+        (0.25 * tone) +
+        (0.20 * correctness) +
+        (0.15 * resolution) +
         (0.15 * actionability) +
-        (0.10 * policy),
+        (0.10 * policy) +
+        (0.10 * conciseness) +
+        (0.05 * clarity),
         4
     )
 
@@ -254,6 +292,8 @@ def grade(
         resolution_score=resolution,
         actionability_score=actionability,
         policy_compliance_score=policy,
+        conciseness_score=conciseness,
+        clarity_score=clarity,
         base_score=base_score,
         improvement_bonus=improvement_bonus,
         repeated_mistake_penalty=repeated_mistake_penalty,

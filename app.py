@@ -184,6 +184,8 @@ def submit_response(env_state, response, reflection):
         f"Resolution:    {result.info.get('resolution_score', 0):.4f}\n"
         f"Actionability: {result.info.get('actionability_score', 0):.4f}\n"
         f"Policy:        {result.info.get('policy_compliance_score', 0):.4f}\n"
+        f"Conciseness:   {result.info.get('conciseness_score', 0):.4f}\n"
+        f"Clarity:       {result.info.get('clarity_score', 0):.4f}\n"
         f"───────────────────────\n"
         f"Base Score:    {result.info.get('base_score', 0):.4f}\n"
         f"+ Improvement: {result.info.get('improvement_bonus', 0):.4f}\n"

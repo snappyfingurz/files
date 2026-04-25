@@ -198,6 +198,8 @@ class CustomerSupportEnv:
                 "resolution_score": result.resolution_score,
                 "actionability_score": result.actionability_score,
                 "policy_compliance_score": result.policy_compliance_score,
+                "conciseness_score": result.conciseness_score,
+                "clarity_score": result.clarity_score,
                 "base_score": result.base_score,
                 "improvement_bonus": result.improvement_bonus,
                 "repeated_mistake_penalty": result.repeated_mistake_penalty,
