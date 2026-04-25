@@ -201,8 +201,9 @@ def score_policy(response: str, task: Task) -> float:
 # ---------------------------------------------------------------------------
 
 def score_conciseness(response: str) -> float:
-    # ── Exploitation prevention ──
-    if len(response.strip()) < 10:
+    # ── Softened Exploitation prevention ──
+    # Only penalize short responses if they are ALSO meaningless
+    if len(response.strip()) < 10 and is_gibberish(response):
         return 0.2
 
     word_count = len(response.split())
@@ -219,8 +220,9 @@ def score_conciseness(response: str) -> float:
 # ---------------------------------------------------------------------------
 
 def score_clarity(response: str) -> float:
-    # ── Exploitation prevention ──
-    if len(response.strip()) < 10:
+    # ── Softened Exploitation prevention ──
+    # Only penalize short responses if they are ALSO meaningless
+    if len(response.strip()) < 10 and is_gibberish(response):
         return 0.2
         
     # Basic clarity estimation via words-per-sentence

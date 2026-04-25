@@ -159,45 +159,47 @@ class CustomerSupportEnv:
         # Repeated mistakes (progressive penalty)
         repeated = past_set & current_set
         
-        # ── Quality Gate & Reward Shaping ────────────────────────────
-        base_score = result.base_score
+        # ── Ultimate Recovery Reward System (Stability Fix) ───────────
+        # 1. Start with the Base Score (Heuristic Quality)
+        # Guaranteed to be 0.0 to 1.0 from the grader
+        base_score = float(result.base_score)
         
-        # 1. Quality Gate: Penalize poor tone or zero resolution effort
-        if result.tone_score < 0.3 or result.resolution_score < 0.3:
-            base_score *= 0.5
+        # 2. Soft Quality Gate: 30% reduction ONLY if tone and resolution are both zero/poor
+        if result.tone_score < 0.3 and result.resolution_score < 0.3:
+            base_score = round(base_score * 0.7, 4)
 
-        # 2. Improvement / Avoidance Bonus
-        improvement = round(len(avoided) * 0.10, 4)
-        improvement_bonus = min(improvement, 0.15) # Cap improvement bonus
+        # 3. Improvement/Avoidance Bonus (+0.1 per avoided past mistake)
+        avoided_count = len(past_set - current_set)
+        recovery_bonus = min(avoided_count * 0.15, 0.40) # Stronger nudge for recovery
         
-        # 3. Restrict bonus if base quality is unacceptable
-        if base_score < 0.4:
-            improvement_bonus *= 0.3
-        
-        # 4. Progressive repeated mistake penalty
-        prog_penalty = 0.0
+        # 4. Progressive Repeated Penalty (Light & Bounded)
+        # We only penalize if they keep making the SAME mistake across episodes
+        repeated_p = 0.0
         for m in repeated:
             count = m_counts.get(m, 0)
-            penalty_per = round(min(0.08 * count, 0.5), 4)
-            prog_penalty -= penalty_per
+            # Each repeat costs a small amount, maxing at -0.05 per tag
+            tag_p = min(0.01 + (0.01 * count), 0.05)
+            repeated_p += tag_p
+            
+        # Hard cap on total penalty impact per turn
+        total_p = min(repeated_p, 0.20) 
         
-        # Final Reward Calculation
-        # final_reward = base_score + improvement_bonus + avoidance_bonus + progressive_penalty
-        # Note: avoidance_bonus is treated as the improvement cap per section 3/4.
-        final_reward = round(base_score + improvement_bonus + prog_penalty, 4)
+        # ── Final Reward Calculation ─────────────────────────────────
+        # Formula: Base + Recovery Bonus - Repeated Penalty
+        final_reward = round(base_score + recovery_bonus - total_p, 4)
         
         # ── Gibberish Override ──
         if "gibberish_detected" in result.mistakes_found:
-            final_reward = -0.20
-            improvement_bonus = 0.0
+            final_reward = -0.15 # Reduced penalty for gibberish to prevent sinkholing
         
-        # Clamp to reasonable stable range [-1, 1.5]
-        final_reward = max(-1.0, min(1.5, final_reward))
+        # ── Strict Balanced Clamping ──
+        # This ensures the agent ALWAYS sees a reward between -0.3 and 1.0
+        final_reward = float(max(-0.3, min(final_reward, 1.0)))
 
-        # Update result with final calculated values for UI / Logging
+        # Update result/info for UI transparency
         result.base_score = base_score
-        result.improvement_bonus = improvement_bonus
-        result.repeated_mistake_penalty = abs(prog_penalty)
+        result.improvement_bonus = recovery_bonus
+        result.repeated_mistake_penalty = total_p
         result.final_reward = final_reward
 
         # Generate structured feedback
