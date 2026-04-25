@@ -86,6 +86,8 @@ class GraderResult(BaseModel):
     tone_score: float = Field(ge=0.0, le=1.0)
     correctness_score: float = Field(ge=0.0, le=1.0)
     resolution_score: float = Field(ge=0.0, le=1.0)
+    actionability_score: float = Field(ge=0.0, le=1.0)
+    policy_compliance_score: float = Field(ge=0.0, le=1.0)
     base_score: float = Field(ge=0.0, le=1.0)
     improvement_bonus: float = Field(ge=0.0)
     repeated_mistake_penalty: float = Field(ge=0.0)

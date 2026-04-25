@@ -196,6 +196,8 @@ class CustomerSupportEnv:
                 "tone_score": result.tone_score,
                 "correctness_score": result.correctness_score,
                 "resolution_score": result.resolution_score,
+                "actionability_score": result.actionability_score,
+                "policy_compliance_score": result.policy_compliance_score,
                 "base_score": result.base_score,
                 "improvement_bonus": result.improvement_bonus,
                 "repeated_mistake_penalty": result.repeated_mistake_penalty,

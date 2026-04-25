@@ -163,6 +163,40 @@ def score_resolution(response: str) -> float:
 
 
 # ---------------------------------------------------------------------------
+# Actionability scorer
+# ---------------------------------------------------------------------------
+
+ACTIONABILITY_PATTERNS: List[str] = [
+    r"\bi will\b", 
+    r"\bwithin \w+\b", 
+    r"\bnext step\b", 
+    r"\bimmediately\b", 
+    r"\bright away\b",
+    r"\bi am going to\b",
+]
+
+def score_actionability(response: str) -> float:
+    matched = _count_matches(ACTIONABILITY_PATTERNS, response)
+    if matched >= 2:
+        return 1.0
+    elif matched == 1:
+        return 0.5
+    return 0.2
+
+
+# ---------------------------------------------------------------------------
+# Policy Compliance scorer
+# ---------------------------------------------------------------------------
+
+def score_policy(response: str, task: Task) -> float:
+    # Safely penalize forbidden policy violations without destroying the whole score
+    for phrase in task.forbidden_phrases:
+        if phrase.lower() in response.lower():
+            return 0.0
+    return 1.0
+
+
+# ---------------------------------------------------------------------------
 # Main grader
 # ---------------------------------------------------------------------------
 
@@ -185,8 +219,17 @@ def grade(
     tone = score_tone(response)
     correctness = score_correctness(response, task)
     resolution = score_resolution(response)
+    actionability = score_actionability(response)
+    policy = score_policy(response, task)
 
-    base_score = round((tone + correctness + resolution) / 3.0, 4)
+    base_score = round(
+        (0.30 * tone) +
+        (0.25 * correctness) +
+        (0.20 * resolution) +
+        (0.15 * actionability) +
+        (0.10 * policy),
+        4
+    )
 
     # Detect mistakes in this response
     current_mistakes: List[str] = detect_mistakes(response, task)
@@ -209,6 +252,8 @@ def grade(
         tone_score=tone,
         correctness_score=correctness,
         resolution_score=resolution,
+        actionability_score=actionability,
+        policy_compliance_score=policy,
         base_score=base_score,
         improvement_bonus=improvement_bonus,
         repeated_mistake_penalty=repeated_mistake_penalty,

@@ -45,7 +45,9 @@ def episode_easy(env: CustomerSupportEnv) -> None:
     print(f"Reward: {result.reward:.4f}  |  Done: {result.done}")
     print(f"Tone: {result.info['tone_score']:.2f}  "
           f"Correctness: {result.info['correctness_score']:.2f}  "
-          f"Resolution: {result.info['resolution_score']:.2f}")
+          f"Resolution: {result.info['resolution_score']:.2f}  "
+          f"Action: {result.info['actionability_score']:.2f}  "
+          f"Policy: {result.info['policy_compliance_score']:.2f}")
     print(f"Mistakes: {result.info['mistakes_found'] or 'none'}")
     print(f"Feedback:\n{result.info['feedback']}")
 

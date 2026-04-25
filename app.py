@@ -178,20 +178,16 @@ def submit_response(env_state, response, reflection):
     # ── format outputs ───────────────────────────────────────────────
     reward_str = f"{result.reward:+.4f}"
 
-    base = (
-        result.info["tone_score"]
-        + result.info["correctness_score"]
-        + result.info["resolution_score"]
-    ) / 3.0
-
     scores_str = (
-        f"Tone:          {result.info['tone_score']:.4f}\n"
-        f"Correctness:   {result.info['correctness_score']:.4f}\n"
-        f"Resolution:    {result.info['resolution_score']:.4f}\n"
+        f"Tone:          {result.info.get('tone_score', 0):.4f}\n"
+        f"Correctness:   {result.info.get('correctness_score', 0):.4f}\n"
+        f"Resolution:    {result.info.get('resolution_score', 0):.4f}\n"
+        f"Actionability: {result.info.get('actionability_score', 0):.4f}\n"
+        f"Policy:        {result.info.get('policy_compliance_score', 0):.4f}\n"
         f"───────────────────────\n"
-        f"Base Score:    {base:.4f}\n"
-        f"+ Improvement: {result.info['improvement_bonus']:.4f}\n"
-        f"- Penalty:     {result.info['repeated_mistake_penalty']:.4f}"
+        f"Base Score:    {result.info.get('base_score', 0):.4f}\n"
+        f"+ Improvement: {result.info.get('improvement_bonus', 0):.4f}\n"
+        f"- Penalty:     {result.info.get('repeated_mistake_penalty', 0):.4f}"
     )
 
     feedback_str = result.info.get("feedback", "—")
