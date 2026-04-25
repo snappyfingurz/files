@@ -147,6 +147,39 @@ class CustomerSupportEnv:
             past_mistakes=past_mistakes,
         )
 
+        # ── Progressive Punishment System ────────────────────────────
+        # Get historical mistake counts from memory
+        m_counts = self.memory.get_mistake_counts()
+        
+        # Avoided mistakes (improvement / avoidance bonus)
+        current_set = set(result.mistakes_found)
+        past_set = set(past_mistakes)
+        avoided = past_set - current_set
+        
+        # Repeated mistakes (progressive penalty)
+        repeated = past_set & current_set
+        
+        # Calculate scores
+        # User requested: base_score + improvement_bonus + avoidance_bonus + progressive_penalty
+        # Based on section 3, "improvement_bonus" is +0.1 per avoided mistake.
+        # We consolidate these into a single avoidance reward of 0.1 per mistake to follow the description.
+        avoidance_reward = round(len(avoided) * 0.10, 4)
+        
+        prog_penalty = 0.0
+        for m in repeated:
+            count = m_counts.get(m, 0)
+            penalty_per = round(min(0.08 * count, 0.5), 4)
+            prog_penalty -= penalty_per
+        
+        final_reward = round(result.base_score + avoidance_reward + prog_penalty, 4)
+        # Clamp to reasonable bounds
+        final_reward = max(-0.5, min(1.5, final_reward))
+
+        # Update result with new reward
+        result.improvement_bonus = avoidance_reward
+        result.repeated_mistake_penalty = abs(prog_penalty)
+        result.final_reward = final_reward
+
         # Generate structured feedback
         fb = generate_feedback(
             response=action.response,
@@ -157,10 +190,10 @@ class CustomerSupportEnv:
         # Update memory
         self.memory.add_mistakes(result.mistakes_found)
         self.memory.add_feedback(fb)
-        self.memory.record_score(task.task_id, result.final_reward)
+        self.memory.record_score(task.task_id, final_reward)
 
         # Update cumulative score
-        self._state.score = round(self._state.score + result.final_reward, 4)
+        self._state.score = round(self._state.score + final_reward, 4)
 
         # Record episode in history
         record = EpisodeRecord(

@@ -259,12 +259,12 @@ def grade(
     clarity = score_clarity(response)
 
     base_score = round(
-        (0.25 * tone) +
-        (0.20 * correctness) +
-        (0.15 * resolution) +
-        (0.15 * actionability) +
-        (0.10 * policy) +
-        (0.10 * conciseness) +
+        (0.28 * tone) +
+        (0.22 * correctness) +
+        (0.18 * resolution) +
+        (0.12 * actionability) +
+        (0.08 * policy) +
+        (0.07 * conciseness) +
         (0.05 * clarity),
         4
     )

@@ -33,6 +33,7 @@ class AgentMemory:
 
         # Global across all tasks
         self._mistakes: List[str] = []      # ordered, deduped
+        self._mistake_counts: Dict[str, int] = defaultdict(int) # Counts for progressive penalty
         self._feedback: List[str] = []      # most-recent first, capped
 
         # Per-task score history  { task_id: [score, score, ...] }
@@ -45,6 +46,7 @@ class AgentMemory:
     def add_mistakes(self, mistakes: List[str]) -> None:
         """Merge new mistake tags into global memory (deduped, capped)."""
         for m in mistakes:
+            self._mistake_counts[m] += 1
             if m not in self._mistakes:
                 self._mistakes.append(m)
         # Keep only the most recent N unique tags
@@ -55,8 +57,13 @@ class AgentMemory:
         """Return current mistake tags, sorted for determinism."""
         return sorted(self._mistakes)
 
+    def get_mistake_counts(self) -> Dict[str, int]:
+        """Return the cumulative frequency of each mistake."""
+        return dict(self._mistake_counts)
+
     def clear_mistakes(self) -> None:
         self._mistakes.clear()
+        self._mistake_counts.clear()
 
     # ------------------------------------------------------------------
     # Feedback management
@@ -103,6 +110,7 @@ class AgentMemory:
     def reset_all(self) -> None:
         """Wipe everything — use between independent experiment runs."""
         self._mistakes.clear()
+        self._mistake_counts.clear()
         self._feedback.clear()
         self._score_history.clear()
 
@@ -113,6 +121,7 @@ class AgentMemory:
     def to_dict(self) -> dict:
         return {
             "mistakes": self._mistakes,
+            "mistake_counts": dict(self._mistake_counts),
             "feedback": self._feedback,
             "score_history": dict(self._score_history),
         }
@@ -131,6 +140,7 @@ class AgentMemory:
             data = json.load(f)
         mem = cls(**kwargs)
         mem._mistakes = data.get("mistakes", [])
+        mem._mistake_counts = defaultdict(int, data.get("mistake_counts", {}))
         mem._feedback = data.get("feedback", [])
         for tid, scores in data.get("score_history", {}).items():
             mem._score_history[tid] = scores
