@@ -201,6 +201,10 @@ def score_policy(response: str, task: Task) -> float:
 # ---------------------------------------------------------------------------
 
 def score_conciseness(response: str) -> float:
+    # ── Exploitation prevention ──
+    if len(response.strip()) < 10:
+        return 0.2
+
     word_count = len(response.split())
     if word_count < 60:
         return 1.0
@@ -215,6 +219,10 @@ def score_conciseness(response: str) -> float:
 # ---------------------------------------------------------------------------
 
 def score_clarity(response: str) -> float:
+    # ── Exploitation prevention ──
+    if len(response.strip()) < 10:
+        return 0.2
+        
     # Basic clarity estimation via words-per-sentence
     sentences = [s.strip() for s in re.split(r'[.!?]', response) if s.strip()]
     if not sentences:
@@ -228,6 +236,47 @@ def score_clarity(response: str) -> float:
     elif wps < 25:
         return 0.7
     return 0.4
+
+
+def is_gibberish(text: str) -> bool:
+    """Detect meaningless responses (no vowels or no real words)."""
+    text = text.lower().strip()
+    if not text:
+        return True
+    
+    # Rule 1: Very short responses (e.g. "I'll fix") are never gibberish
+    if len(text) < 5:
+        return False
+    
+    # Rule 2: Check for common meaningful keywords in support context
+    meaningful_keywords = {
+        "sorry", "apologize", "apologies", "help", "order", "check", 
+        "investigat", "resolv", "fix", "address", "understand", 
+        "frustrat", "sincer", "valu", "appreciat", "thank",
+    }
+    for kw in meaningful_keywords:
+        if kw in text:
+            return False
+
+    # Rule 3: Check vowel ratio
+    # If it has at least 2 vowels and is reasonably short, 
+    # or has a decent vowel-to-consonant ratio, it's likely fine.
+    vowels = sum(1 for char in text if char in 'aeiou')
+    letters = sum(1 for char in text if char.isalpha())
+    
+    # If basically no vowels in a medium/long string, it's gibberish
+    if letters > 0 and (vowels / letters) < 0.15:
+        return True
+    
+    # Rule 4: Check if contains any alphanumeric word with at least 1 vowel
+    words = text.split()
+    valid_word = False
+    for w in words:
+        if any(c in 'aeiou' for c in w) and len(w) > 1:
+            valid_word = True
+            break
+    
+    return not valid_word
 
 
 # ---------------------------------------------------------------------------
@@ -257,6 +306,23 @@ def grade(
     policy = score_policy(response, task)
     conciseness = score_conciseness(response)
     clarity = score_clarity(response)
+
+    # ── Gibberish Check ──
+    if is_gibberish(response):
+        return GraderResult(
+            tone_score=0.1,
+            correctness_score=0.1,
+            resolution_score=0.0,
+            actionability_score=0.0,
+            policy_compliance_score=0.0,
+            conciseness_score=0.1,
+            clarity_score=0.1,
+            base_score=0.1,
+            improvement_bonus=0.0,
+            repeated_mistake_penalty=0.0,
+            final_reward=0.1,
+            mistakes_found=["gibberish_detected"]
+        )
 
     base_score = round(
         (0.28 * tone) +
