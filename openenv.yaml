@@ -1,0 +1,134 @@
+# openenv.yaml — OpenEnv environment specification
+# Self-Improving Customer Support Agent
+
+name: self-improving-customer-support-agent
+version: "1.0.0"
+description: >
+  An RL training environment in which an agent responds to angry customer
+  messages, receives deterministic grading and structured feedback, and
+  improves its performance across episodes using persistent memory.
+
+author: "OpenEnv Example"
+license: MIT
+
+# ─────────────────────────────────────────────
+# Environment entry point
+# ─────────────────────────────────────────────
+entrypoint:
+  module: env
+  class: CustomerSupportEnv
+
+# ─────────────────────────────────────────────
+# Action space
+# ─────────────────────────────────────────────
+action_space:
+  type: structured
+  schema: models.Action
+  fields:
+    response:
+      type: string
+      description: Customer-facing reply (required)
+    reflection:
+      type: string
+      description: Internal agent reasoning (required)
+
+# ─────────────────────────────────────────────
+# Observation space
+# ─────────────────────────────────────────────
+observation_space:
+  type: structured
+  schema: models.Observation
+  fields:
+    customer_message:
+      type: string
+      description: The angry-customer message the agent must address
+    past_feedback:
+      type: list[string]
+      description: Structured critique from previous episodes (memory)
+    past_mistakes:
+      type: list[string]
+      description: Short mistake tags from previous episodes (memory)
+
+# ─────────────────────────────────────────────
+# State space
+# ─────────────────────────────────────────────
+state_space:
+  type: structured
+  schema: models.State
+  fields:
+    history:
+      type: list[EpisodeRecord]
+      description: Full record of completed episodes
+    score:
+      type: float
+      description: Cumulative reward across all episodes
+    step_count:
+      type: int
+      description: Total steps taken
+    current_task_id:
+      type: string | null
+    done:
+      type: bool
+
+# ─────────────────────────────────────────────
+# Reward
+# ─────────────────────────────────────────────
+reward:
+  range: [-0.5, 1.5]
+  formula: >
+    reward = base_score
+           + improvement_bonus (0.10 per avoided past mistake)
+           − repeated_mistake_penalty (0.15 per repeated past mistake)
+  base_score:
+    formula: (tone_score + correctness_score + resolution_score) / 3
+    components:
+      tone_score:
+        range: [0, 1]
+        description: Empathy signals present, hostile language absent
+      correctness_score:
+        range: [0, 1]
+        description: Required keywords present, forbidden phrases absent
+      resolution_score:
+        range: [0, 1]
+        description: Concrete resolution commitment expressed
+
+# ─────────────────────────────────────────────
+# Tasks
+# ─────────────────────────────────────────────
+tasks:
+  - id: easy_001
+    difficulty: easy
+    summary: Single delayed-shipment complaint with clear refund path
+
+  - id: medium_001
+    difficulty: medium
+    summary: Three simultaneous issues — billing, app crash, ignored ticket
+
+  - id: hard_001
+    difficulty: hard
+    summary: Customer demands a refund that violates the 30-day policy window
+
+# ─────────────────────────────────────────────
+# Memory
+# ─────────────────────────────────────────────
+memory:
+  module: memory
+  class: AgentMemory
+  persistence: in-memory (JSON serialisation optional via save/load)
+  max_feedback_entries: 10
+  max_mistake_entries: 20
+
+# ─────────────────────────────────────────────
+# Episode termination
+# ─────────────────────────────────────────────
+termination:
+  single_step_mode: done=True after 1 step  # default
+  multi_step_mode:  done=True after max_steps (configurable)
+
+# ─────────────────────────────────────────────
+# Dependencies
+# ─────────────────────────────────────────────
+dependencies:
+  python: ">=3.10"
+  packages:
+    - pydantic>=2.0,<3.0
