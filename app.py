@@ -1,396 +1,173 @@
 """
-app.py — Gradio UI for the Self-Improving Customer Support Agent Environment.
+app.py — Fully automatic LLM-driven RL simulation (no manual customer reply).
 
-Wraps the existing OpenEnv environment (env.py) with an interactive Gradio
-interface.  No modifications to the underlying RL logic, reward system, or
-memory.
-
-Usage:
-    python app.py
-
-Compatible with Hugging Face Spaces (set `sdk: gradio` in the Space README).
+Run:  python app.py
 """
 
 from __future__ import annotations
 
+import random
+import threading
+import time
+import traceback
+
 import gradio as gr
 
+from agent import DEFAULT_REFLECTION, ensure_llm_ready, llm_agent
 from env import CustomerSupportEnv
 from models import Action
 from tasks import all_task_ids
 
-# ── Constants ────────────────────────────────────────────────────────────────
+_UI = threading.Lock()
+_ENV: CustomerSupportEnv = CustomerSupportEnv(
+    seed=int(time.time() * 1000) % (2**30) ^ random.randint(1, 999_999)
+)
 
-TASK_CHOICES = ["Random"] + all_task_ids()
+TASK_CHOICES: list[str] = ["Random"] + list(all_task_ids())
 
 DESCRIPTION = """\
-An **OpenEnv** reinforcement-learning environment where **you** play the
-support agent.  Respond to angry customers, get graded on tone / correctness /
-resolution, and watch the **memory-driven self-improvement** loop in action
-across episodes.
+**Autonomous self-improving support agent** — the LLM writes every response. **No typing.**
 
-1. **Select a task** (or leave "Random") and click **Reset Episode**.
-2. Read the customer message, then write your response.
-3. Click **Submit** — the deterministic grader scores you instantly.
-4. Click **Reset Episode** again to start the next episode.  
-   Your past mistakes and feedback carry over in memory!
+Click **Run simulation** to run: `obs = env.reset()` → `while not done: action = llm_agent(obs); result = env.step(action); obs = result.observation`.
+
+Set `HF_TOKEN` for the Hugging Face API (default), or `LLM_BACKEND=local` for a local `transformers` pipeline. Temperature 0.7–0.8 in `agent.py`. Optional: stop early after **3 consecutive** episodes with reward ≥ 0.9.
 """
 
-CUSTOM_CSS = """
-.status-bar textarea { font-weight: 600 !important; }
-.reward-box textarea {
-    font-size: 1.6rem !important;
-    font-weight: 700 !important;
-    text-align: center !important;
-}
-.score-box textarea { font-family: monospace !important; }
-"""
 
-# ── Helper ───────────────────────────────────────────────────────────────────
-
-
-def _bullets(items: list[str], empty: str = "None") -> str:
-    if not items:
-        return empty
-    return "\n".join(f"• {m}" for m in items)
-
-
-# ── Core callbacks ───────────────────────────────────────────────────────────
-
-
-def reset_episode(env_state, task_choice):
-    """Reset the environment and return a fresh observation."""
-    if env_state is None:
-        env_state = CustomerSupportEnv(seed=42)
-
-    task_id = None if task_choice == "Random" else task_choice
-    obs = env_state.reset(task_id=task_id)
-    st = env_state.state()
-
-    past_mistakes = _bullets(
-        obs.past_mistakes, "None yet — this is the first episode."
-    )
-    past_feedback = (
-        "\n\n---\n\n".join(obs.past_feedback)
-        if obs.past_feedback
-        else "None yet — complete an episode to generate feedback."
-    )
-
-    status = (
-        f"🟢 Ready  ·  Task: {st.current_task_id}  ·  "
-        f"Steps: {st.step_count}  ·  Total Reward: {st.score:.4f}"
-    )
-
-    return (
-        env_state,              # gr.State
-        obs.customer_message,   # customer_msg
-        past_mistakes,          # past_mistakes_box
-        past_feedback,          # past_feedback_box
-        "",                     # response_input  (clear)
-        "",                     # reflection_input (clear)
-        "—",                    # reward_box
-        "—",                    # scores_box
-        "—",                    # feedback_box
-        "—",                    # mistakes_box
-        status,                 # status_bar
-    )
-
-
-def submit_response(env_state, response, reflection):
-    """Grade the agent's response via env.step() and return results."""
-
-    # ── guard: env not initialised ───────────────────────────────────
-    if env_state is None:
-        gr.Warning("Please click 'Reset Episode' first to load a task.")
-        return _placeholder_outputs(None, "⚠️ Click Reset to start.")
-
-    st = env_state.state()
-
-    # ── guard: episode already finished ──────────────────────────────
-    if st.done:
-        gr.Warning(
-            "This episode is done. Click 'Reset Episode' to start the next one."
-        )
-        pm = _bullets(env_state.memory.get_mistakes())
-        pf = (
-            "\n\n---\n\n".join(env_state.memory.get_feedback())
-            if env_state.memory.get_feedback()
-            else "—"
-        )
-        return (
-            env_state,
-            "✅ Episode finished — click Reset.",
-            pm,
-            pf,
-            response,
-            reflection,
-            "—",
-            "—",
-            "—",
-            "—",
-            f"🔴 Done  ·  Steps: {st.step_count}  ·  Total Reward: {st.score:.4f}",
-        )
-
-    # ── guard: empty response ────────────────────────────────────────
-    if not response or not response.strip():
-        gr.Warning("Please write a response before submitting.")
-        msg = (
-            env_state._current_task.customer_message
-            if env_state._current_task
-            else "—"
-        )
-        pm = _bullets(env_state.memory.get_mistakes())
-        pf = (
-            "\n\n---\n\n".join(env_state.memory.get_feedback())
-            if env_state.memory.get_feedback()
-            else "—"
-        )
-        return (
-            env_state,
-            msg,
-            pm,
-            pf,
-            response,
-            reflection,
-            "—",
-            "—",
-            "—",
-            "—",
-            f"🟡 Waiting for response  ·  Task: {st.current_task_id}",
-        )
-
-    # ── run the step ─────────────────────────────────────────────────
-    refl = (
-        reflection.strip()
-        if (reflection and reflection.strip())
-        else "No reflection provided."
-    )
-    action = Action(response=response.strip(), reflection=refl)
-
+def _run_autonomous_loop(
+    task: str,
+    max_episodes: int,
+    early_mastery: bool,
+) -> tuple[str, str, str, str, str, str, str, str]:
     try:
-        result = env_state.step(action)
-    except RuntimeError as exc:
-        gr.Warning(str(exc))
-        return _placeholder_outputs(env_state, f"⚠️ {exc}")
+        return _run_autonomous_loop_impl(task, max_episodes, early_mastery)
+    except Exception as e:
+        tb = traceback.format_exc()
+        err = f"{type(e).__name__}: {e}"
+        sim = f"**Run failed**\n\n{err}\n\n```\n{tb}\n```"
+        st = f"Error — {err}"
+        return (
+            f"**Could not start or finish the run.**\n\n`{err}`\n\n"
+            "If the message mentions a missing token, set `HF_TOKEN` (PowerShell: "
+            "`$env:HF_TOKEN = 'hf_...'`) or use `LLM_BACKEND=local` with a GPU and transformers.",
+            "—",
+            "—",
+            "—",
+            "—",
+            "—",
+            st,
+            sim,
+        )
 
-    st = env_state.state()
 
-    # ── format outputs ───────────────────────────────────────────────
-    reward_str = f"{result.reward:+.4f}"
+def _run_autonomous_loop_impl(
+    task: str,
+    max_episodes: int,
+    early_mastery: bool,
+) -> tuple[str, str, str, str, str, str, str, str]:
+    ensure_llm_ready()
+    log_lines: list[str] = []
+    last_preview = ""
+    last_rew = "—"
+    last_mist = "—"
+    last_cust = "—"
+    high_streak = 0
+    obs: object | None = None
+    episodes_done = 0
+    nmax = max(0, int(max_episodes))
 
-    scores_str = (
-        f"Tone:          {result.info.get('tone_score', 0):.4f}\n"
-        f"Correctness:   {result.info.get('correctness_score', 0):.4f}\n"
-        f"Resolution:    {result.info.get('resolution_score', 0):.4f}\n"
-        f"Actionability: {result.info.get('actionability_score', 0):.4f}\n"
-        f"Policy:        {result.info.get('policy_compliance_score', 0):.4f}\n"
-        f"Conciseness:   {result.info.get('conciseness_score', 0):.4f}\n"
-        f"Clarity:       {result.info.get('clarity_score', 0):.4f}\n"
-        f"───────────────────────\n"
-        f"Base Score:    {result.info.get('base_score', 0):.4f}\n"
-        f"+ Improvement: {result.info.get('improvement_bonus', 0):.4f}\n"
-        f"- Penalty:     {result.info.get('repeated_mistake_penalty', 0):.4f}"
-    )
+    if nmax < 1:
+        return (
+            "Set **Max episodes** to at least 1.",
+            "—",
+            "—",
+            "—",
+            "—",
+            "—",
+            "—",
+            "—",
+        )
 
-    feedback_str = result.info.get("feedback", "—")
+    with _UI:
+        for ep in range(1, nmax + 1):
+            tid = None if task == "Random" else task
+            obs = _ENV.reset(task_id=tid)
+            done = False
+            while not done:
+                action: Action = llm_agent(obs)
+                result = _ENV.step(action)
+                obs = result.observation
+                reward = float(result.reward)
+                done = result.done
+                prev = (action.response or "")[:120].replace("\n", " ")
+                mtags = result.info.get("mistakes_found", []) or []
+                mstr = ", ".join(mtags) if mtags else "none"
+                cum = _ENV.state().score
+                line = (
+                    f"Ep {ep} | step reward: {reward:.3f} | running total: {cum:+.3f} | mistakes: {mstr} | "
+                    f"response: {prev}{'...' if len((action.response or '')) > 120 else ''}"
+                )
+                log_lines.append(line)
+                print(f"Response: {prev}...")
+                print(f"Reward: {reward:.3f}")
+                last_preview = (action.response or "")[:2000]
+                last_rew = f"{reward:+.4f}"
+                last_mist = mstr
+                last_cust = (obs.customer_message or "")[:2000]
+            episodes_done = ep
+            r_ep = float(result.reward)
+            if r_ep >= 0.9:
+                high_streak += 1
+            else:
+                high_streak = 0
+            if early_mastery and high_streak >= 3:
+                log_lines.append(">>> Early stop: reward >= 0.9 for 3 consecutive episodes.")
+                break
 
-    mistakes = result.info.get("mistakes_found", [])
-    mistakes_str = (
-        _bullets(mistakes)
-        if mistakes
-        else "✅ No mistakes found — excellent response!"
-    )
-
-    pm = _bullets(
-        result.observation.past_mistakes,
-        "No accumulated mistakes.",
-    )
-    pf = (
-        "\n\n---\n\n".join(result.observation.past_feedback)
-        if result.observation.past_feedback
-        else "—"
-    )
-
-    done_label = (
-        "DONE — click Reset for next episode"
-        if result.done
-        else "Awaiting next step"
-    )
+    full_log = "\n".join(log_lines) if log_lines else "(no steps)"
+    st = _ENV.state()
+    o = obs
+    if o is None:
+        return ("—",) * 8
+    pm = "\n".join(f"- {m}" for m in o.past_mistakes) or "—"
+    pfb = "\n---\n".join(o.past_feedback) if o.past_feedback else "—"
     status = (
-        f"{'🔴' if result.done else '🟢'} {done_label}  ·  "
-        f"Steps: {st.step_count}  ·  Total Reward: {st.score:.4f}"
+        f"Episodes this run: {episodes_done}  |  cumulative: {st.score:+.4f}  |  "
+        f"total steps: {st.step_count}"
     )
-
     return (
-        env_state,
-        result.observation.customer_message,
+        f"**Customer (last observation)**\n\n```\n{last_cust}\n```",
         pm,
-        pf,
-        "",  # clear response input
-        "",  # clear reflection input
-        reward_str,
-        scores_str,
-        feedback_str,
-        mistakes_str,
+        pfb,
+        f"**Last model reply**\n\n```\n{last_preview}\n```\n\n**Reflection:** `{DEFAULT_REFLECTION}`",
+        f"Last step reward: {last_rew}\nCumulative total: {st.score:+.4f}",
+        last_mist,
         status,
+        full_log,
     )
 
 
-def _placeholder_outputs(env_state, message: str):
-    """Return a full tuple of placeholder values for error / guard states."""
-    return (
-        env_state,
-        message,
-        "—",
-        "—",
-        "",
-        "",
-        "—",
-        "—",
-        "—",
-        "—",
-        "🔴 " + message,
-    )
-
-
-# ── Gradio UI ────────────────────────────────────────────────────────────────
-
-with gr.Blocks(theme=gr.themes.Soft(), css=CUSTOM_CSS) as demo:
-
-    env_state = gr.State(value=None)
-
-    # ── Header ────────────────────────────────────────────────────────
-    gr.Markdown("# 🎯 Self-Improving Customer Support Agent")
+with gr.Blocks(title="Autonomous support agent (LLM RL)") as demo:
+    gr.Markdown("# Self-Improving Customer Support Agent")
     gr.Markdown(DESCRIPTION)
-
-    # ── Controls row ──────────────────────────────────────────────────
     with gr.Row():
-        task_dropdown = gr.Dropdown(
-            choices=TASK_CHOICES,
-            value="Random",
-            label="Task Selection",
-            scale=2,
-        )
-        reset_btn = gr.Button("🔄 Reset Episode", variant="primary", scale=1)
+        tsel = gr.Dropdown(choices=TASK_CHOICES, value="Random", label="Task")
+        n_ep = gr.Slider(1, 30, value=5, step=1, label="Max episodes per run")
+        early = gr.Checkbox(value=True, label="Early stop if reward ≥ 0.9 for 3 episodes in a row")
+    run_btn = gr.Button("Run simulation", variant="primary", scale=1)
 
-    status_bar = gr.Textbox(
-        label="Status",
-        value="Click 'Reset Episode' to begin.",
-        interactive=False,
-        elem_classes=["status-bar"],
-    )
+    cmsg = gr.Markdown()
+    m_pm = gr.Textbox(label="Memory: past mistake tags", lines=3, interactive=False)
+    m_pfb = gr.Textbox(label="Memory: past feedback (injected into next llm_agent call)", lines=4, interactive=False)
+    m_reply = gr.Markdown()
+    rbox = gr.Textbox(label="Reward (last step + cumulative)", lines=2, interactive=False)
+    mtags = gr.Textbox(label="Mistake tags (last step)", lines=1, interactive=False)
+    stline = gr.Textbox(label="Status", lines=1, interactive=False)
+    sim_log = gr.Textbox(label="Simulation log (episodes, reward, response preview, mistakes)", lines=22, interactive=False)
 
-    # ── Main two-column layout ────────────────────────────────────────
-    with gr.Row(equal_height=True):
-
-        # Left column — environment info
-        with gr.Column(scale=1):
-            customer_msg = gr.Textbox(
-                label="📨 Customer Message",
-                lines=8,
-                interactive=False,
-                placeholder="Click Reset to load a task…",
-            )
-            with gr.Accordion("🧠 Memory — Past Mistakes", open=False):
-                past_mistakes_box = gr.Textbox(
-                    lines=5,
-                    interactive=False,
-                    show_label=False,
-                    value="—",
-                )
-            with gr.Accordion("🧠 Memory — Past Feedback", open=False):
-                past_feedback_box = gr.Textbox(
-                    lines=8,
-                    interactive=False,
-                    show_label=False,
-                    value="—",
-                )
-
-        # Right column — agent input
-        with gr.Column(scale=1):
-            response_input = gr.Textbox(
-                label="✍️ Your Response",
-                lines=8,
-                placeholder="Type your customer support response here…",
-            )
-            reflection_input = gr.Textbox(
-                label="💭 Your Reflection (optional)",
-                lines=2,
-                placeholder=(
-                    "Why did you choose this approach? "
-                    "What did you learn from past feedback?"
-                ),
-            )
-            submit_btn = gr.Button(
-                "📤 Submit Response",
-                variant="primary",
-            )
-
-    # ── Results section ───────────────────────────────────────────────
-    gr.Markdown("### 📊 Grading Results")
-
-    with gr.Row():
-        reward_box = gr.Textbox(
-            label="🏆 Reward",
-            value="—",
-            interactive=False,
-            scale=1,
-            elem_classes=["reward-box"],
-        )
-        scores_box = gr.Textbox(
-            label="Score Breakdown",
-            value="—",
-            lines=7,
-            interactive=False,
-            scale=2,
-            elem_classes=["score-box"],
-        )
-
-    with gr.Row():
-        feedback_box = gr.Textbox(
-            label="📝 Grader Feedback",
-            value="—",
-            lines=5,
-            interactive=False,
-            scale=2,
-        )
-        mistakes_box = gr.Textbox(
-            label="⚠️ Mistakes Found This Episode",
-            value="—",
-            lines=5,
-            interactive=False,
-            scale=1,
-        )
-
-    # ── Wire events ───────────────────────────────────────────────────
-    all_outputs = [
-        env_state,
-        customer_msg,
-        past_mistakes_box,
-        past_feedback_box,
-        response_input,
-        reflection_input,
-        reward_box,
-        scores_box,
-        feedback_box,
-        mistakes_box,
-        status_bar,
-    ]
-
-    reset_btn.click(
-        fn=reset_episode,
-        inputs=[env_state, task_dropdown],
-        outputs=all_outputs,
-    )
-
-    submit_btn.click(
-        fn=submit_response,
-        inputs=[env_state, response_input, reflection_input],
-        outputs=all_outputs,
-    )
-
-
-# ── Launch ────────────────────────────────────────────────────────────────────
+    out = [cmsg, m_pm, m_pfb, m_reply, rbox, mtags, stline, sim_log]
+    run_btn.click(_run_autonomous_loop, [tsel, n_ep, early], out)
 
 if __name__ == "__main__":
-    demo.launch()
+    demo.queue(default_concurrency_limit=1)
+    demo.launch(theme=gr.themes.Soft(), css="")
